@@ -1,0 +1,76 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'relay-server.js'
+      - 'package.json'
+      - 'docker-compose.yml'
+      - 'Caddyfile'
+      - 'Dockerfile'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          password: ${{ secrets.VPS_PASS }}
+          script: |
+            cd /data/copilot-relay
+
+            # Pull latest code (skip .env and copilot binary)
+            REPO_URL="https://github.com/lalalic/copilot-relay.git"
+
+            # Use git if initialized, otherwise fresh clone
+            if [ -d .git ]; then
+              git fetch origin main
+              git reset --hard origin/main
+            else
+              # Init git in existing directory
+              git init
+              git remote add origin "$REPO_URL"
+              git fetch origin main
+              git reset --hard origin/main
+            fi
+
+            # Install deps if package.json changed
+            docker run --rm -v /data/copilot-relay:/app -w /app node:20-alpine npm install --production
+
+            # Restart relay (preserves .env and copilot binary)
+            docker-compose down
+            docker-compose up -d
+
+            # Wait for pool to be ready
+            sleep 15
+            docker logs --tail 5 copilot-relay 2>&1
+
+      - name: Verify deployment
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          password: ${{ secrets.VPS_PASS }}
+          script: |
+            # Health check - ping the relay
+            docker exec copilot-relay node -e "
+              const ws = require('ws');
+              const c = new ws.WebSocket('ws://localhost:8765');
+              c.on('open', () => {
+                c.send(JSON.stringify({method:'ping'}));
+              });
+              c.on('message', d => {
+                const msg = JSON.parse(d);
+                if (msg.message === 'pong') {
+                  console.log('✓ Relay healthy');
+                  process.exit(0);
+                }
+              });
+              setTimeout(() => { console.log('✗ Timeout'); process.exit(1); }, 5000);
+            "
