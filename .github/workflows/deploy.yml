@@ -58,6 +58,20 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           password: ${{ secrets.VPS_PASS }}
           script: |
+            # Wait for relay to be ready (up to 60s)
+            for i in $(seq 1 12); do
+              STATUS=$(docker inspect -f '{{.State.Running}}' copilot-relay 2>/dev/null)
+              if [ "$STATUS" = "true" ]; then
+                # Check if pool is ready
+                if docker logs --tail 3 copilot-relay 2>&1 | grep -q "Ready"; then
+                  echo "✓ Relay container running and pool ready"
+                  break
+                fi
+              fi
+              echo "Waiting... ($i/12)"
+              sleep 5
+            done
+
             # Health check - ping the relay
             docker exec copilot-relay node -e "
               const ws = require('ws');
