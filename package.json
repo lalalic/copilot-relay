@@ -1,0 +1,13 @@
+{
+  "name": "copilot-relay",
+  "version": "1.0.0",
+  "description": "WebSocket relay with session pooling for Copilot CLI",
+  "main": "relay-server.js",
+  "scripts": {
+    "start": "node relay-server.js",
+    "dev": "node relay-server.js"
+  },
+  "dependencies": {
+    "ws": "^8.20.0"
+  }
+}

@@ -1,0 +1,47 @@
+version: '2.3'
+
+services:
+  relay:
+    image: node:20
+    container_name: copilot-relay
+    privileged: true
+    working_dir: /app
+    command: node relay-server.js
+    ports:
+      - "8765:8765"
+    environment:
+      - PORT=8765
+      - POOL_SIZE=3
+      - LOG_LEVEL=info
+      - MODEL=gpt-4.1
+      - HOLD_TIMEOUT=600000
+      - CLI_PATH=/app/copilot
+      - COPILOT_GITHUB_TOKEN=${COPILOT_GITHUB_TOKEN}
+    volumes:
+      - /opt/copilot-relay:/app
+      - copilot-config:/root/.copilot
+    restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: copilot-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /opt/copilot-relay/Caddyfile:/etc/caddy/Caddyfile
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: always
+    depends_on:
+      - relay
+
+volumes:
+  copilot-config:
+  caddy-data:
+  caddy-config:
