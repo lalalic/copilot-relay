@@ -16,9 +16,11 @@ services:
       - MODEL=gpt-4.1
       - HOLD_TIMEOUT=600000
       - CLI_PATH=/app/copilot
+      - APPS_DIR=/data/apps
       - COPILOT_GITHUB_TOKEN=${COPILOT_GITHUB_TOKEN}
     volumes:
       - /data/copilot-relay:/app
+      - /data/apps:/data/apps
       - copilot-config:/root/.copilot
     restart: always
     logging:

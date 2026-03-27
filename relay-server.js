@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// v2.2 — auto-deploy verified
+// v2.3 — auto-create workspaces for new apps
 /**
  * Copilot CLI Pool Relay Server v2
  * 
@@ -42,6 +42,8 @@ const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
 const MODEL = process.env.MODEL || 'gpt-4.1';
 const HOLD_TIMEOUT = parseInt(process.env.HOLD_TIMEOUT) || 10 * 60 * 1000; // 10 minutes
 const WORKSPACES_CONFIG = process.env.WORKSPACES || null;
+const APPS_DIR = process.env.APPS_DIR || null; // Auto-create workspace dirs here (e.g., /data/apps)
+const AUTO_CREATE = process.env.AUTO_CREATE !== 'false'; // Auto-create workspaces for unknown appIds
 
 // --- Agent Config ---
 
@@ -833,6 +835,41 @@ class WorkspaceManager {
         return this.workspaces.get('default') || this.workspaces.values().next().value;
     }
 
+    /**
+     * Auto-create a new workspace/pool for an unknown appId.
+     * Creates a directory under APPS_DIR (or os.tmpdir()) and starts a new CLI process.
+     */
+    async getOrCreateProxy(appId) {
+        if (!appId || appId === 'default') {
+            return this.getProxy(appId);
+        }
+        if (this.workspaces.has(appId)) {
+            return this.workspaces.get(appId);
+        }
+        if (!AUTO_CREATE) {
+            return this.getProxy(appId); // fallback to default
+        }
+
+        // Sanitize appId for filesystem
+        const safeAppId = appId.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const baseDir = APPS_DIR || path.join(os.tmpdir(), 'copilot-relay-apps');
+        const appDir = path.join(baseDir, safeAppId);
+        fs.mkdirSync(appDir, { recursive: true });
+
+        log('info', `Auto-creating workspace for appId: ${appId} at ${appDir}`);
+
+        const proxy = new PoolProxy({
+            appId: safeAppId,
+            cwd: appDir,
+            poolSize: POOL_SIZE,
+            model: MODEL,
+        });
+        await proxy.start();
+        this.workspaces.set(appId, proxy);
+        log('info', `Workspace ${appId} ready (${proxy.pool.size} sessions)`);
+        return proxy;
+    }
+
     async handleClientMessage(ws, msg) {
         // Handle ping before proxy assignment — clients send ping on connect
         if (msg.method === 'ping') {
@@ -848,7 +885,7 @@ class WorkspaceManager {
 
         if (msg.method === 'session.create' || msg.method === 'session.resume') {
             const appId = msg.params?.appId || 'default';
-            proxy = this.getProxy(appId);
+            proxy = await this.getOrCreateProxy(appId);
             ws._proxy = proxy;
         } else {
             proxy = ws._proxy;
@@ -913,6 +950,7 @@ async function main() {
     console.log(`\nCopilot Pool Relay v2`);
     console.log(`  Port: ${PORT}`);
     console.log(`  Hold timeout: ${HOLD_TIMEOUT / 1000}s`);
+    console.log(`  Auto-create: ${AUTO_CREATE ? 'enabled' : 'disabled'}${APPS_DIR ? ` (${APPS_DIR})` : ''}`);
     const stats = manager.allStats();
     for (const s of stats) {
         console.log(`  [${s.appId}] Pool: ${s.total} sessions`);
