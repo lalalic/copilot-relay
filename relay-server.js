@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// v2.1 — auto-deploy enabled
 /**
  * Copilot CLI Pool Relay Server v2
  * 
