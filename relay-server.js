@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// v2.3 — auto-create workspaces for new apps
+// v2.4 — client model selection
 /**
  * Copilot CLI Pool Relay Server v2
  * 
@@ -330,7 +330,7 @@ class PoolProxy {
         log('info', `[${this.appId}] Pool ready: ${this.available.length} sessions`);
     }
 
-    createPoolSession(sid, extraTools, extraSystemMessage) {
+    createPoolSession(sid, extraTools, extraSystemMessage, clientModel) {
         return new Promise((resolve, reject) => {
             if (!this.pool.has(sid)) {
                 this.pool.set(sid, {
@@ -374,12 +374,15 @@ class PoolProxy {
             // Use client system message if provided, otherwise default
             const sysMsg = extraSystemMessage || buildSessionSystemMessage(this.systemMessage);
 
+            // Use client-requested model, or fall back to pool default
+            const sessionModel = clientModel || this.model;
+
             this.cli.stdin.write(frame({
                 jsonrpc: '2.0', id,
                 method: 'session.create',
                 params: {
                     sessionId: sid,
-                    model: this.model,
+                    model: sessionModel,
                     infiniteSessions: { enabled: true, backgroundCompactionThreshold: 0.80 },
                     requestPermission: true,
                     systemMessage: sysMsg,
@@ -393,7 +396,7 @@ class PoolProxy {
      * Re-create a pool session with client-specific tools.
      * Returns the new sessionId (since the CLI session uses a new ID).
      */
-    async recreatePoolSession(oldSid, clientTools, clientSystemMessage) {
+    async recreatePoolSession(oldSid, clientTools, clientSystemMessage, clientModel) {
         // Generate a new session ID for the CLI
         const newSid = `${this.appId}-pool-${this.pool.size}`;
 
@@ -401,8 +404,8 @@ class PoolProxy {
         this.pool.delete(oldSid);
         this.sessionToWs.delete(oldSid);
 
-        // Create new session with merged tools
-        await this.createPoolSession(newSid, clientTools, clientSystemMessage);
+        // Create new session with merged tools and client model
+        await this.createPoolSession(newSid, clientTools, clientSystemMessage, clientModel);
 
         // Remove from available list (caller will set it active)
         const availIdx = this.available.indexOf(newSid);
@@ -541,12 +544,13 @@ class PoolProxy {
 
             // Assign from pool (lazy expand if empty)
             const clientTools = msg.params?.tools;
+            const clientModel = msg.params?.model || null;
             let createdWithClientTools = false;
             if (this.available.length === 0) {
                 const sid = `${this.appId}-pool-${this.pool.size}`;
-                log('info', `[${this.appId}] Pool exhausted, lazy-creating ${sid}`);
+                log('info', `[${this.appId}] Pool exhausted, lazy-creating ${sid}${clientModel ? ` (model: ${clientModel})` : ''}`);
                 try {
-                    await this.createPoolSession(sid, clientTools, msg.params?.systemMessage);
+                    await this.createPoolSession(sid, clientTools, msg.params?.systemMessage, clientModel);
                     if (clientTools?.length > 0) createdWithClientTools = true;
                 } catch (e) {
                     ws.send(frame({ jsonrpc: '2.0', id: msg.id,
@@ -563,12 +567,12 @@ class PoolProxy {
             ws._poolSession = sid;
             ws._clientId = clientId;
             ws._appId = this.appId;
-            log('info', `[${this.appId}] Assigned ${sid}${clientId ? ` to ${clientId}` : ''}`);
+            log('info', `[${this.appId}] Assigned ${sid}${clientId ? ` to ${clientId}` : ''}${clientModel ? ` (model: ${clientModel})` : ''}`);
 
-            // If client provided custom tools and session wasn't already created with them, re-create
-            if (clientTools?.length > 0 && !createdWithClientTools) {
+            // If client provided custom tools (or model), and session wasn't already created with them, re-create
+            if ((clientTools?.length > 0 || clientModel) && !createdWithClientTools) {
                 try {
-                    const newSid = await this.recreatePoolSession(sid, clientTools, msg.params?.systemMessage);
+                    const newSid = await this.recreatePoolSession(sid, clientTools, msg.params?.systemMessage, clientModel);
                     // Update references to use the new session ID
                     sid = newSid;
                     entry = this.pool.get(newSid);
@@ -578,8 +582,8 @@ class PoolProxy {
                     this.sessionToWs.set(newSid, ws);
                     ws._poolSession = newSid;
                 } catch (e) {
-                    log('error', `[${this.appId}] Failed to recreate ${sid} with client tools: ${e.message}`);
-                    // Continue with existing session (will have only AGENT_TOOLS)
+                    log('error', `[${this.appId}] Failed to recreate ${sid}: ${e.message}`);
+                    // Continue with existing session
                 }
             }
 
