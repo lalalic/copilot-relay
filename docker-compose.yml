@@ -18,7 +18,7 @@ services:
       - CLI_PATH=/app/copilot
       - COPILOT_GITHUB_TOKEN=${COPILOT_GITHUB_TOKEN}
     volumes:
-      - /opt/copilot-relay:/app
+      - /data/copilot-relay:/app
       - copilot-config:/root/.copilot
     restart: always
     logging:
@@ -34,7 +34,7 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - /opt/copilot-relay/Caddyfile:/etc/caddy/Caddyfile
+      - /data/copilot-relay/Caddyfile:/etc/caddy/Caddyfile
       - caddy-data:/data
       - caddy-config:/config
     restart: always
